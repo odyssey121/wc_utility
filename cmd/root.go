@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -42,34 +44,72 @@ var rootCmd = &cobra.Command{
 		return cobra.OnlyValidArgs(cmd, args)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		filepath := args[0]
-		f, _ := os.Open(filepath)
+		path := args[0]
+		filename := filepath.Base(path)
+		f, _ := os.Open(path)
 		defer f.Close()
-		if cmd.Flags().Changed("bytes") {
-			getBytes(f)
-		} else if cmd.Flags().Changed("chars") {
-			getChars(f)
-		} else if cmd.Flags().Changed("lines") {
-			getLines(getLinesParam{f, false})
-		} else if cmd.Flags().Changed("max-line-length") {
-			getMaxLineLen(f)
-		} else if cmd.Flags().Changed("words") {
-			getWords(f)
+
+		var result []string
+
+		if cmd.Flags().Changed("max-line-length") {
+			result = append(result, fmt.Sprintf("max-line-length: %d", getMaxLineLen(f)))
 		}
+
+		if cmd.Flags().Changed("lines") {
+			result = append(result, fmt.Sprintf("lines: %d", getLines(getLinesParam{f, false})))
+
+		}
+
+		if cmd.Flags().Changed("words") {
+			result = append(result, fmt.Sprintf("words: %d", getWords(f)))
+		}
+
+		if cmd.Flags().Changed("chars") {
+			result = append(result, fmt.Sprintf("chars: %d", getChars(f)))
+		}
+
+		if cmd.Flags().Changed("bytes") {
+			result = append(result, fmt.Sprintf("bytes: %d", getBytes(f)))
+		}
+
+		if result == nil {
+			result = append(
+				result,
+				fmt.Sprintf("max-line-length: %d", getMaxLineLen(f)),
+				fmt.Sprintf("lines: %d", getLines(getLinesParam{f, false})),
+				fmt.Sprintf("words: %d", getWords(f)),
+				fmt.Sprintf("chars: %d", getChars(f)),
+				fmt.Sprintf("bytes: %d", getBytes(f)))
+
+		}
+
+		resultStr := strings.Join(result, ", ")
+
+		fmt.Println(fmt.Sprint(resultStr, "\t", filename))
 
 	},
 }
 
-func getChars(f *os.File) {
+func getChars(f *os.File) int {
+	if getCurPos(f) != 0 {
+		f.Seek(0, io.SeekStart)
+	}
 	scanner := bufio.NewScanner(f)
+	scanner.Split(bufio.ScanRunes)
 	count := 0
 	for scanner.Scan() {
-		count += len(scanner.Text())
+		txt := scanner.Text()
+		if txt != "" {
+			count += len(txt)
+		}
 	}
-	fmt.Println(count)
+	return count
 }
 
-func getWords(f *os.File) {
+func getWords(f *os.File) int {
+	if getCurPos(f) != 0 {
+		f.Seek(0, io.SeekStart)
+	}
 	scanner := bufio.NewScanner(f)
 	count := 0
 	re := regexp.MustCompile(`[^\s]+`)
@@ -77,19 +117,38 @@ func getWords(f *os.File) {
 		matchesB := re.FindAll(scanner.Bytes(), -1)
 		count += len(matchesB)
 	}
-	fmt.Println(count)
+	return count
 }
 
-func getBytes(f *os.File) {
-	scanner := bufio.NewScanner(f)
-	count := 0
-	for scanner.Scan() {
-		count += len(scanner.Bytes())
+func getBytes(f *os.File) int {
+	if getCurPos(f) != 0 {
+		f.Seek(0, io.SeekStart)
 	}
-	fmt.Println(count)
+	fS, _ := f.Stat()
+	scanner := bufio.NewScanner(f)
+	scanner.Split(bufio.ScanBytes)
+	bSlice := make([]byte, 0, fS.Size())
+	for scanner.Scan() {
+		b := scanner.Bytes()
+		bSlice = append(bSlice, b...)
+	}
+	return len(bSlice)
 }
 
-func getMaxLineLen(f *os.File) {
+func getCurPos(f *os.File) int64 {
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		fmt.Println("getCurPos error:", err)
+
+	}
+	return offset
+
+}
+
+func getMaxLineLen(f *os.File) int {
+	if getCurPos(f) != 0 {
+		f.Seek(0, io.SeekStart)
+	}
 	rd := bufio.NewReader(f)
 	max := 0
 	for {
@@ -103,10 +162,9 @@ func getMaxLineLen(f *os.File) {
 		if err == io.EOF {
 			break
 		}
-
 	}
 
-	fmt.Println(max)
+	return max
 }
 
 type getLinesParam struct {
@@ -114,8 +172,10 @@ type getLinesParam struct {
 	noNewLine bool
 }
 
-func getLines(p getLinesParam) {
-	fmt.Println("p", p)
+func getLines(p getLinesParam) int {
+	if getCurPos(p.f) != 0 {
+		p.f.Seek(0, io.SeekStart)
+	}
 	rd := bufio.NewReader(p.f)
 	count := 0
 	for {
@@ -128,13 +188,10 @@ func getLines(p getLinesParam) {
 				break
 			}
 			fmt.Printf("read file line error: %v", err)
-			return
 		}
 		count++
-
 	}
-
-	fmt.Println(count)
+	return count
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
