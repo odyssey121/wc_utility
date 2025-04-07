@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -44,6 +45,7 @@ var rootCmd = &cobra.Command{
 		return cobra.OnlyValidArgs(cmd, args)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		defer timer("main")()
 		path := args[0]
 		filename := filepath.Base(path)
 		f, _ := os.Open(path)
@@ -88,6 +90,13 @@ var rootCmd = &cobra.Command{
 		fmt.Println(fmt.Sprint(resultStr, "\t", filename))
 
 	},
+}
+
+func timer(name string) func() {
+	start := time.Now()
+	return func() {
+		fmt.Printf("%s took %v\n", name, time.Since(start))
+	}
 }
 
 func getChars(f *os.File) int {
