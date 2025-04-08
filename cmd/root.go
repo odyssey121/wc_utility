@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -48,21 +50,26 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		defer timer("main")()
 		path := args[0]
-		// filename := filepath.Base(path)
 
-		// var waitGroup sync.WaitGroup
+		changedFlags := []string{}
 
-		inputFlagsMap := make(map[int]string)
-
-		for i, flag := range flagsArr {
+		for _, flag := range flagsArr {
 			if cmd.Flags().Changed(flag) {
-				inputFlagsMap[i] = flag
-				mapCh[flag] = make(chan int)
+				changedFlags = append(changedFlags, flag)
 			}
 
 		}
 
-		for _, flag := range inputFlagsMap {
+		if len(changedFlags) == 0 {
+			changedFlags = append(changedFlags, flagsArr[:]...)
+		}
+
+		// init chan
+		for _, f := range changedFlags {
+			mapCh[f] = make(chan int)
+		}
+
+		for _, flag := range changedFlags {
 			switch flag {
 			case "max-line-length":
 				go getMaxLineLen(path)
@@ -75,50 +82,17 @@ var rootCmd = &cobra.Command{
 			case "bytes":
 				go getBytes(path)
 			default:
-				fmt.Println("default => ", flag)
+				fmt.Println("flag not found => ", flag)
 			}
 
 		}
 
-		// fmt.Println("mapCh ", mapCh)
-		// fmt.Println("inputFlagsMap ", inputFlagsMap)
+		var result string
 
-		for flag, v := range mapCh {
-
-			fmt.Printf("\n flag => %s  val=> %d \n", flag, <-v)
-
-			// for v := range ch {
-			// 	// fmt.Println(" flag => ", flag, " val=> ", v)
-			// }
-
+		for _, flag := range changedFlags {
+			result = fmt.Sprintf("%s%s: %d, ", result, flag, <-mapCh[flag])
 		}
-
-		// maxLines := <-mapCh["max_lines_len"]
-		// lines := <-mapCh["lines"]
-		// words := <-mapCh["words"]
-		// chars := <-mapCh["chars"]
-		// bytes := <-mapCh["bytes"]
-
-		// fmt.Println("maxLines:", maxLines)
-		// fmt.Println("lines:", lines)
-		// fmt.Println("words:", words)
-		// fmt.Println("chars:", chars)
-		// fmt.Println("bytes:", bytes)
-
-		// if result == nil {
-		// 	result = append(
-		// 		result,
-		// 		fmt.Sprintf("max-line-length: %d", getMaxLineLen(f)),
-		// 		fmt.Sprintf("lines: %d", getLines(getLinesParam{f, false})),
-		// 		fmt.Sprintf("words: %d", getWords(f)),
-		// 		fmt.Sprintf("chars: %d", getChars(f)),
-		// 		fmt.Sprintf("bytes: %d", getBytes(f)))
-
-		// }
-
-		// resultStr := strings.Join(result, ", ")
-
-		// fmt.Println(fmt.Sprint(resultStr, "\t", filename))
+		fmt.Println(strings.TrimRight(result, ", "), " ", filepath.Base(path))
 
 	},
 }
@@ -217,7 +191,6 @@ type getLinesParam struct {
 }
 
 func getLines(p getLinesParam) {
-	fmt.Println("getLines:")
 	f, err := os.Open(p.fp)
 	if err != nil {
 		fmt.Println("getLines err:", err)
