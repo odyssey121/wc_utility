@@ -86,7 +86,7 @@ var rootCmd = &cobra.Command{
 
 		resultSlice := []string{}
 		n := len(changedFlags)
-		for i := 0; i < n; i++ {
+		for range n {
 			resultSlice = append(resultSlice, <-ch)
 		}
 		fmt.Println(strings.Join(resultSlice, ", "), " ", filepath.Base(path))
