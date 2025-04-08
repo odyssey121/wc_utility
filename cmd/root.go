@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var mapCh = make(map[string](chan int))
 var flagsArr = [5]string{"max-line-length", "lines", "words", "chars", "bytes"}
+var ch chan string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -64,10 +64,7 @@ var rootCmd = &cobra.Command{
 			changedFlags = append(changedFlags, flagsArr[:]...)
 		}
 
-		// init chan
-		for _, f := range changedFlags {
-			mapCh[f] = make(chan int)
-		}
+		ch = make(chan string, len(changedFlags))
 
 		for _, flag := range changedFlags {
 			switch flag {
@@ -87,13 +84,12 @@ var rootCmd = &cobra.Command{
 
 		}
 
-		var result string
-
-		for _, flag := range changedFlags {
-			result = fmt.Sprintf("%s%s: %d, ", result, flag, <-mapCh[flag])
+		resultSlice := []string{}
+		n := len(changedFlags)
+		for i := 0; i < n; i++ {
+			resultSlice = append(resultSlice, <-ch)
 		}
-		fmt.Println(strings.TrimRight(result, ", "), " ", filepath.Base(path))
-
+		fmt.Println(strings.Join(resultSlice, ", "), " ", filepath.Base(path))
 	},
 }
 
@@ -119,7 +115,7 @@ func getChars(fp string) {
 			count += len(txt)
 		}
 	}
-	mapCh["chars"] <- count
+	ch <- fmt.Sprintf("chars: %d", count)
 }
 
 func getWords(fp string) {
@@ -136,7 +132,7 @@ func getWords(fp string) {
 		matchesB := re.FindAll(scanner.Bytes(), -1)
 		count += len(matchesB)
 	}
-	mapCh["words"] <- count
+	ch <- fmt.Sprintf("words: %d", count)
 }
 
 func getBytes(fp string) {
@@ -155,7 +151,7 @@ func getBytes(fp string) {
 		bSlice = append(bSlice, b...)
 	}
 
-	mapCh["bytes"] <- len(bSlice)
+	ch <- fmt.Sprintf("bytes: %d", len(bSlice))
 }
 
 func getMaxLineLen(fp string) {
@@ -182,7 +178,9 @@ func getMaxLineLen(fp string) {
 		}
 
 	}
-	mapCh["max-line-length"] <- max
+
+	ch <- fmt.Sprintf("max-line-length: %d", max)
+
 }
 
 type getLinesParam struct {
@@ -212,7 +210,7 @@ func getLines(p getLinesParam) {
 		}
 		count++
 	}
-	mapCh["lines"] <- count
+	ch <- fmt.Sprintf("lines: %d", count)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
