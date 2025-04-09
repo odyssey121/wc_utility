@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,9 +15,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/semaphore"
 )
 
-var mapCh = make(map[string](chan int))
+var mapFn = map[string]interface{}{"max-line-length": getMaxLineLen, "lines": getLines, "words": getWords, "chars": getChars, "bytes": getBytes}
 var flagsArr = [5]string{"max-line-length", "lines", "words", "chars", "bytes"}
 
 // rootCmd represents the base command when called without any subcommands
@@ -64,33 +66,39 @@ var rootCmd = &cobra.Command{
 			changedFlags = append(changedFlags, flagsArr[:]...)
 		}
 
-		// init chan
-		for _, f := range changedFlags {
-			mapCh[f] = make(chan int)
-		}
+		var Workers = len(changedFlags)
+		var sem = semaphore.NewWeighted(int64(Workers))
+		// требуется для Acquire()
+		ctx := context.TODO()
+		var resultSlice = make([]int, len(changedFlags))
+		// main logic
+		for i, f := range changedFlags {
+			fn, ok := mapFn[f]
+			if ok {
+				err := sem.Acquire(ctx, 1)
+				if err != nil {
+					fmt.Println("Cannot acquire semaphore:", err)
+					break
+				}
+				go func(flag string, index int) {
+					defer sem.Release(1)
+					resultSlice[index] = fn.(func(string) int)(path)
+				}(f, i)
 
-		for _, flag := range changedFlags {
-			switch flag {
-			case "max-line-length":
-				go getMaxLineLen(path)
-			case "lines":
-				go getLines(getLinesParam{path, false})
-			case "words":
-				go getWords(path)
-			case "chars":
-				go getChars(path)
-			case "bytes":
-				go getBytes(path)
-			default:
-				fmt.Println("flag not found => ", flag)
 			}
-
+		}
+		// Acquire all of the tokens
+		// This is similar to Wait()
+		// It blocks until all workers have finished
+		err := sem.Acquire(ctx, int64(Workers))
+		if err != nil {
+			fmt.Println(err)
 		}
 
 		var result string
 
-		for _, flag := range changedFlags {
-			result = fmt.Sprintf("%s%s: %d, ", result, flag, <-mapCh[flag])
+		for i, v := range resultSlice {
+			result = fmt.Sprintf("%s%s: %d, ", result, changedFlags[i], v)
 		}
 		fmt.Println(strings.TrimRight(result, ", "), " ", filepath.Base(path))
 
@@ -104,7 +112,7 @@ func timer(name string) func() {
 	}
 }
 
-func getChars(fp string) {
+func getChars(fp string) (count int) {
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getChars err:", err)
@@ -112,17 +120,16 @@ func getChars(fp string) {
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	scanner.Split(bufio.ScanRunes)
-	count := 0
 	for scanner.Scan() {
 		txt := scanner.Text()
 		if txt != "" {
 			count += len(txt)
 		}
 	}
-	mapCh["chars"] <- count
+	return
 }
 
-func getWords(fp string) {
+func getWords(fp string) (count int) {
 
 	f, err := os.Open(fp)
 	if err != nil {
@@ -130,16 +137,16 @@ func getWords(fp string) {
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
-	count := 0
 	re := regexp.MustCompile(`[^\s]+`)
 	for scanner.Scan() {
 		matchesB := re.FindAll(scanner.Bytes(), -1)
 		count += len(matchesB)
 	}
-	mapCh["words"] <- count
+	return
+
 }
 
-func getBytes(fp string) {
+func getBytes(fp string) int {
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getBytes err:", err)
@@ -154,11 +161,11 @@ func getBytes(fp string) {
 		b := scanner.Bytes()
 		bSlice = append(bSlice, b...)
 	}
+	return len(bSlice)
 
-	mapCh["bytes"] <- len(bSlice)
 }
 
-func getMaxLineLen(fp string) {
+func getMaxLineLen(fp string) (max int) {
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getMaxLineLen err:", err)
@@ -166,7 +173,7 @@ func getMaxLineLen(fp string) {
 	defer f.Close()
 
 	rd := bufio.NewReader(f)
-	max := 0
+	max = 0
 	for {
 		b, _, err := rd.ReadLine()
 		if err != nil {
@@ -182,7 +189,8 @@ func getMaxLineLen(fp string) {
 		}
 
 	}
-	mapCh["max-line-length"] <- max
+	return
+
 }
 
 type getLinesParam struct {
@@ -190,29 +198,29 @@ type getLinesParam struct {
 	noNewLine bool
 }
 
-func getLines(p getLinesParam) {
-	f, err := os.Open(p.fp)
+func getLines(p string) (count int) {
+	f, err := os.Open(p)
 	if err != nil {
 		fmt.Println("getLines err:", err)
 	}
 	defer f.Close()
 
 	rd := bufio.NewReader(f)
-	count := 0
 	for {
-		l, err := rd.ReadString('\n')
+		_, err := rd.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				if len(l) != 0 && p.noNewLine {
-					count++
-				}
+				// if len(l) != 0 && p.noNewLine {
+				// 	count++
+				// }
 				break
 			}
 			fmt.Printf("read file line error: %v", err)
 		}
 		count++
 	}
-	mapCh["lines"] <- count
+	return
+
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
