@@ -11,13 +11,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
-var mapCh = make(map[string](chan int))
 var flagsArr = [5]string{"max-line-length", "lines", "words", "chars", "bytes"}
+var resultMap = make(map[string]int)
+var wg sync.WaitGroup
+var mt sync.Mutex
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -64,33 +67,33 @@ var rootCmd = &cobra.Command{
 			changedFlags = append(changedFlags, flagsArr[:]...)
 		}
 
-		// init chan
-		for _, f := range changedFlags {
-			mapCh[f] = make(chan int)
-		}
-
 		for _, flag := range changedFlags {
-			switch flag {
-			case "max-line-length":
-				go getMaxLineLen(path)
-			case "lines":
-				go getLines(getLinesParam{path, false})
-			case "words":
-				go getWords(path)
-			case "chars":
-				go getChars(path)
-			case "bytes":
-				go getBytes(path)
-			default:
-				fmt.Println("flag not found => ", flag)
-			}
+			wg.Add(1)
+			go func(f string) {
+				switch f {
+				case "max-line-length":
+					go getMaxLineLen(path)
+				case "lines":
+					go getLines(getLinesParam{path, false})
+				case "words":
+					go getWords(path)
+				case "chars":
+					go getChars(path)
+				case "bytes":
+					go getBytes(path)
+				default:
+					fmt.Println("flag not found => ", flag)
+				}
+			}(flag)
 
 		}
+
+		wg.Wait()
 
 		var result string
 
 		for _, flag := range changedFlags {
-			result = fmt.Sprintf("%s%s: %d, ", result, flag, <-mapCh[flag])
+			result = fmt.Sprintf("%s%s: %d, ", result, flag, resultMap[flag])
 		}
 		fmt.Println(strings.TrimRight(result, ", "), " ", filepath.Base(path))
 
@@ -105,6 +108,7 @@ func timer(name string) func() {
 }
 
 func getChars(fp string) {
+	defer wg.Done()
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getChars err:", err)
@@ -119,11 +123,13 @@ func getChars(fp string) {
 			count += len(txt)
 		}
 	}
-	mapCh["chars"] <- count
+	mt.Lock()
+	resultMap["chars"] = count
+	mt.Unlock()
 }
 
 func getWords(fp string) {
-
+	defer wg.Done()
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getWords err:", err)
@@ -136,10 +142,13 @@ func getWords(fp string) {
 		matchesB := re.FindAll(scanner.Bytes(), -1)
 		count += len(matchesB)
 	}
-	mapCh["words"] <- count
+	mt.Lock()
+	resultMap["words"] = count
+	mt.Unlock()
 }
 
 func getBytes(fp string) {
+	defer wg.Done()
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getBytes err:", err)
@@ -154,11 +163,13 @@ func getBytes(fp string) {
 		b := scanner.Bytes()
 		bSlice = append(bSlice, b...)
 	}
-
-	mapCh["bytes"] <- len(bSlice)
+	mt.Lock()
+	resultMap["bytes"] = len(bSlice)
+	mt.Unlock()
 }
 
 func getMaxLineLen(fp string) {
+	defer wg.Done()
 	f, err := os.Open(fp)
 	if err != nil {
 		fmt.Println("getMaxLineLen err:", err)
@@ -182,7 +193,9 @@ func getMaxLineLen(fp string) {
 		}
 
 	}
-	mapCh["max-line-length"] <- max
+	mt.Lock()
+	resultMap["max-line-length"] = max
+	mt.Unlock()
 }
 
 type getLinesParam struct {
@@ -191,6 +204,7 @@ type getLinesParam struct {
 }
 
 func getLines(p getLinesParam) {
+	defer wg.Done()
 	f, err := os.Open(p.fp)
 	if err != nil {
 		fmt.Println("getLines err:", err)
@@ -212,7 +226,9 @@ func getLines(p getLinesParam) {
 		}
 		count++
 	}
-	mapCh["lines"] <- count
+	mt.Lock()
+	resultMap["lines"] = count
+	mt.Unlock()
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
